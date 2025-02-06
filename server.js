@@ -19,9 +19,12 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({ storage: storage }).single("video");
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 2 * 1024 * 1024 * 1024 },
+}).single("video");
 
-app.post("/upload", upload, (req, res) => {
+app.post("/upload", upload, async (req, res) => {
   if (!req.file || path.extname(req.file.originalname) !== ".mov") {
     return res.status(400).send("Ошибка: загружен не MOV файл.");
   }
@@ -31,20 +34,28 @@ app.post("/upload", upload, (req, res) => {
     ".mov"
   )}.mp4`;
 
-  ffmpeg(req.file.path)
-    .output(outputFilePath)
-    .on("end", () => {
-      fs.unlinkSync(req.file.path);
-      res.json({
-        downloadUrl: `http://localhost:${PORT}/download/${path.basename(
-          outputFilePath
-        )}`,
-      });
-    })
-    .on("error", (err) => {
-      res.status(500).send("Ошибка конвертации: " + err.message);
-    })
-    .run();
+  try {
+    await new Promise((resolve, reject) => {
+      ffmpeg(req.file.path)
+        .output(outputFilePath)
+        .on("end", () => {
+          fs.unlinkSync(req.file.path);
+          resolve();
+        })
+        .on("error", (err) => {
+          reject(new Error("Ошибка конвертации: " + err.message));
+        })
+        .run();
+    });
+
+    res.json({
+      downloadUrl: `http://localhost:${PORT}/download/${path.basename(
+        outputFilePath
+      )}`,
+    });
+  } catch (error) {
+    res.status(500).send(error.message);
+  }
 });
 
 app.get("/download/:filename", (req, res) => {
@@ -65,6 +76,8 @@ app.get("/download/:filename", (req, res) => {
 if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
 if (!fs.existsSync("converted")) fs.mkdirSync("converted");
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Сервер запущен на http://localhost:${PORT}`);
 });
+
+server.setTimeout(300000);
